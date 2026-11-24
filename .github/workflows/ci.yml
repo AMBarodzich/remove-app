@@ -1,0 +1,58 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - chart/values.yaml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: iba-prod-ecr
+  AWS_ROLE_ARN: arn:aws:iam::443370672158:role/iba-prod-github-remove-app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+
+      - name: Point Helm chart at the new image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          sed -i "s/^  tag: .*/  tag: \"${IMAGE_TAG}\"/" chart/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chart/values.yaml
+          if git diff --cached --quiet; then
+            echo "image tag already set"
+            exit 0
+          fi
+          git commit -m "chore: deploy image ${IMAGE_TAG}"
+          git push
