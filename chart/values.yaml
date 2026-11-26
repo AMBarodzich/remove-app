@@ -2,13 +2,13 @@ replicaCount: 1
 
 image:
   repository: 443370672158.dkr.ecr.us-east-1.amazonaws.com/iba-prod-ecr
-  tag: "fd605b5693f3765d208535a96ba7dae1900793ce"
+  tag: "ea53c36420c62b08a739aaa68b46425b1615162f"
   pullPolicy: IfNotPresent
 
 service:
   type: LoadBalancer
   port: 80
-  targetPort: 3000
+  targetPort: 8080
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
     service.beta.kubernetes.io/aws-load-balancer-internal: "false"
