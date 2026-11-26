@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: 443370672158.dkr.ecr.us-east-1.amazonaws.com/iba-prod-ecr
-  tag: "cd35e472c500b9c8535cc4bd85b61bf1cfd61948"
+  tag: "fd605b5693f3765d208535a96ba7dae1900793ce"
   pullPolicy: IfNotPresent
 
 service:
