@@ -49,20 +49,88 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-          format: table
+          format: json
+          output: trivy.json
           exit-code: "0"
           vuln-type: os,library
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
-      - name: Fail on fixable high vulnerabilities
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: CRITICAL,HIGH
+      - name: Publish Trivy report
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
+          path = "trivy.json"
+          summary_path = os.environ["GITHUB_STEP_SUMMARY"]
+
+          def cell(value):
+              text = "" if value is None else str(value)
+              text = text.replace("|", "\\|").replace("\n", " ").strip()
+              return text or "—"
+
+          findings = []
+          if os.path.exists(path):
+              with open(path, encoding="utf-8") as report_file:
+                  report = json.load(report_file)
+              for result in report.get("Results") or []:
+                  findings.extend(result.get("Vulnerabilities") or [])
+
+          def rank(vuln):
+              severity = vuln.get("Severity") or "UNKNOWN"
+              position = order.index(severity) if severity in order else len(order)
+              return position, vuln.get("VulnerabilityID") or ""
+
+          findings.sort(key=rank)
+          counts = {name: 0 for name in order}
+          for vuln in findings:
+              counts[vuln.get("Severity") or "UNKNOWN"] = counts.get(vuln.get("Severity") or "UNKNOWN", 0) + 1
+
+          lines = [
+              "## Trivy",
+              "",
+              " ".join(f"**{name}** {counts.get(name, 0)}" for name in order),
+              "",
+          ]
+          if not os.path.exists(path):
+              lines.append("Скан не создал отчёт.")
+          elif not findings:
+              lines.append("Уязвимостей не найдено.")
+          else:
+              lines.extend([
+                  "| Severity | Vulnerability | Package | Installed | Fixed | Title |",
+                  "| --- | --- | --- | --- | --- | --- |",
+              ])
+              for vuln in findings:
+                  vuln_id = vuln.get("VulnerabilityID") or "—"
+                  url = vuln.get("PrimaryURL")
+                  link = f"[{cell(vuln_id)}]({url})" if url else cell(vuln_id)
+                  title = cell(vuln.get("Title"))
+                  if len(title) > 90:
+                      title = title[:87] + "..."
+                  lines.append("| " + " | ".join([
+                      cell(vuln.get("Severity")),
+                      link,
+                      cell(vuln.get("PkgName")),
+                      cell(vuln.get("InstalledVersion")),
+                      cell(vuln.get("FixedVersion")),
+                      title,
+                  ]) + " |")
+
+          blocking = [
+              vuln for vuln in findings
+              if vuln.get("Severity") in ("CRITICAL", "HIGH") and vuln.get("FixedVersion")
+          ]
+          if blocking:
+              lines.extend(["", f"Пуш остановлен: {len(blocking)} исправимых HIGH или CRITICAL."])
+
+          with open(summary_path, "a", encoding="utf-8") as summary_file:
+              summary_file.write("\n".join(lines) + "\n")
+          sys.exit(1 if blocking or not os.path.exists(path) else 0)
+          PY
 
       - name: Push production image
         env:
